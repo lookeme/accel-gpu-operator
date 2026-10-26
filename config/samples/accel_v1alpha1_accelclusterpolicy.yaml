@@ -1,0 +1,9 @@
+apiVersion: accel.example.com/v1alpha1
+kind: AccelClusterPolicy
+metadata:
+  labels:
+    app.kubernetes.io/name: accel-gpu-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: accelclusterpolicy-sample
+spec:
+  # TODO(user): Add fields here
