@@ -6,4 +6,7 @@ metadata:
     app.kubernetes.io/managed-by: kustomize
   name: acceldriver-sample
 spec:
-  # TODO(user): Add fields here
+  version: "1.2.0"
+  nodeSelector:
+    matchLabels:
+      gpu: "true"

@@ -1,0 +1,7 @@
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+  - role: control-plane
+  - role: worker   # worker   → ubuntu + GPU
+  - role: worker   # worker2  → ubuntu + GPU
+  - role: worker   # worker3  → rhel   + GPU

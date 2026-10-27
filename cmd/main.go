@@ -183,8 +183,10 @@ func main() {
 	}
 
 	if err := (&controller.AccelDriverReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:     mgr.GetClient(),
+		Scheme:     mgr.GetScheme(),
+		Namespace:  "accel-gpu",
+		DriverRepo: "repo",
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "acceldriver")
 		os.Exit(1)

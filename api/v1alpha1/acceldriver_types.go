@@ -30,10 +30,13 @@ type AccelDriverSpec struct {
 	// Important: Run "make" to regenerate code after modifying this file
 	// The following markers will use OpenAPI v3 schema to validate the value
 	// More info: https://book.kubebuilder.io/reference/markers/crd-validation.html
+	// Desired driver version, e.g. "1.2.0".
+	// +kubebuilder:validation:MinLength=1
+	Version string `json:"version"`
 
-	// foo is an example field of AccelDriver. Edit acceldriver_types.go to remove/update
-	// +optional
-	Foo *string `json:"foo,omitempty"`
+	// Nodes this driver applies to.
+	// +kubebuilder:validation:Required
+	NodeSelector *metav1.LabelSelector `json:"nodeSelector"`
 }
 
 // AccelDriverStatus defines the observed state of AccelDriver.
