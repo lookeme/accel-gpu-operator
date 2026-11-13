@@ -40,22 +40,37 @@ type AccelDriverSpec struct {
 }
 
 // AccelDriverStatus defines the observed state of AccelDriver.
+// DriverGroupStatus — сводка по одной OS-группе (одному DaemonSet'у).
+type DriverGroupStatus struct {
+	// Group key, e.g. "ubuntu-24.04".
+	Name string `json:"name"`
+	// Managed DaemonSet name.
+	DaemonSet string `json:"daemonSet"`
+	// Nodes we selected for this group.
+	SelectedNodes int32 `json:"selectedNodes"`
+	// Pods the DaemonSet controller decided to run (excludes unschedulable nodes).
+	DesiredPods int32 `json:"desiredPods"`
+	// Pods passing their readiness probe.
+	ReadyPods int32 `json:"readyPods"`
+	// Pods running the current template.
+	UpdatedPods int32 `json:"updatedPods"`
+}
+
 type AccelDriverStatus struct {
-	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
+	// Generation of the spec this status was computed from.
+	// +optional
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 
-	// For Kubernetes API conventions, see:
-	// https://github.com/kubernetes/community/blob/master/contributors/devel/sig-architecture/api-conventions.md#typical-status-properties
+	// +optional
+	SelectedNodes int32 `json:"selectedNodes"`
+	// +optional
+	DesiredPods int32 `json:"desiredPods"`
+	// +optional
+	ReadyPods int32 `json:"readyPods"`
 
-	// conditions represent the current state of the AccelDriver resource.
-	// Each condition has a unique type and reflects the status of a specific aspect of the resource.
-	//
-	// Standard condition types include:
-	// - "Available": the resource is fully functional
-	// - "Progressing": the resource is being created or updated
-	// - "Degraded": the resource failed to reach or maintain its desired state
-	//
-	// The status of each condition is one of True, False, or Unknown.
+	// +optional
+	Groups []DriverGroupStatus `json:"groups,omitempty"`
+
 	// +listType=map
 	// +listMapKey=type
 	// +optional
@@ -65,6 +80,12 @@ type AccelDriverStatus struct {
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Cluster
+// +kubebuilder:printcolumn:name="Version",type=string,JSONPath=`.spec.version`
+// +kubebuilder:printcolumn:name="Nodes",type=integer,JSONPath=`.status.selectedNodes`
+// +kubebuilder:printcolumn:name="Desired",type=integer,JSONPath=`.status.desiredPods`
+// +kubebuilder:printcolumn:name="Ready-Pods",type=integer,JSONPath=`.status.readyPods`
+// +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].status`
+// +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 
 // AccelDriver is the Schema for the acceldrivers API
 type AccelDriver struct {

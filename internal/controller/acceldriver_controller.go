@@ -23,6 +23,8 @@ import (
 	"github.com/lookeme/accel-gpu-operator/internal/nodematch"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -42,6 +44,7 @@ type AccelDriverReconciler struct {
 	Scheme     *runtime.Scheme
 	Namespace  string
 	DriverRepo string
+	FakeDriver bool
 }
 
 // +kubebuilder:rbac:groups=accel.example.com,resources=acceldrivers,verbs=get;list;watch;create;update;patch;delete
@@ -69,7 +72,12 @@ func (r *AccelDriverReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	sel, err := metav1.LabelSelectorAsSelector(driver.Spec.NodeSelector)
 
 	if err != nil {
-		log.Error(err, "unable to convert node selector")
+		log.Error(err, "invalid nodeSelector; leaving existing DaemonSets untouched")
+		// повтор не поможет — сообщаем пользователю через status
+		return ctrl.Result{}, r.updateStatus(ctx, &driver, driver.Status, metav1.Condition{
+			Type: condReady, Status: metav1.ConditionFalse,
+			Reason: "InvalidSelector", Message: err.Error(),
+		})
 	}
 
 	var nodes corev1.NodeList
@@ -80,17 +88,27 @@ func (r *AccelDriverReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	groups, unknown := nodematch.GroupByOS(nodes.Items)
 
 	desiredNames := make(map[string]struct{}, len(groups)) // Go-шный HashSet
-
+	groupStatuses := make([]accelv1alpha1.DriverGroupStatus, 0, len(groups))
+	allObserved := true
 	// 4. Пока только показываем, что БЫ создали
 	for _, g := range groups {
-		desired := buildDriverDaemonSet(&driver, g, r.Namespace, r.DriverRepo)
+		desired := buildDriverDaemonSet(&driver, g, r.Namespace, r.DriverRepo, r.FakeDriver)
 		desiredNames[desired.Name] = struct{}{}
-		op, err := r.applyDriverDaemonSet(ctx, &driver, desired)
+
+		ds, op, err := r.applyDriverDaemonSet(ctx, &driver, desired)
 		if err != nil {
-			// выходим ДО удаления: при сбое ничего не сносим
 			return ctrl.Result{}, fmt.Errorf("apply DaemonSet %s: %w", desired.Name, err)
 		}
-		log.Info("driver DaemonSet", "name", desired.Name, "op", op, "nodes", g.Nodes)
+		log.Info("driver DaemonSet", "name", ds.Name, "op", op, "nodes", g.Nodes)
+
+		groupStatuses = append(groupStatuses, groupStatus(g, ds))
+		if !dsObserved(ds) {
+			allObserved = false
+		}
+	}
+	// 5. Удалить устаревшие
+	if err := r.deleteStaleDaemonSets(ctx, &driver, desiredNames); err != nil {
+		return ctrl.Result{}, err
 	}
 	if len(unknown) > 0 {
 		log.Info("selected nodes without OS labels, skipped", "nodes", unknown)
@@ -100,10 +118,25 @@ func (r *AccelDriverReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		return ctrl.Result{}, err
 	}
 
+	// 6. Status
+	st := accelv1alpha1.AccelDriverStatus{
+		SelectedNodes: int32(len(nodes.Items)),
+		Groups:        groupStatuses,
+	}
+	for _, g := range groupStatuses {
+		st.DesiredPods += g.DesiredPods
+		st.ReadyPods += g.ReadyPods
+	}
+	if err := r.updateStatus(ctx, &driver, st,
+		readyCondition(groupStatuses, allObserved),
+		degradedCondition(unknown),
+	); err != nil {
+		return ctrl.Result{}, err
+	}
+
 	log.Info("reconcile done",
-		"selectedNodes", len(nodes.Items),
-		"groups", len(groups),
-		"unknown", len(unknown))
+		"selectedNodes", st.SelectedNodes, "groups", len(groups),
+		"readyPods", st.ReadyPods, "desiredPods", st.DesiredPods)
 	return ctrl.Result{}, nil
 }
 
@@ -112,13 +145,13 @@ func (r *AccelDriverReconciler) applyDriverDaemonSet(
 	ctx context.Context,
 	driver *accelv1alpha1.AccelDriver,
 	desired *appsv1.DaemonSet,
-) (controllerutil.OperationResult, error) {
+) (*appsv1.DaemonSet, controllerutil.OperationResult, error) {
 	ds := &appsv1.DaemonSet{ObjectMeta: metav1.ObjectMeta{
 		Name:      desired.Name,
 		Namespace: desired.Namespace,
 	}}
 
-	return controllerutil.CreateOrUpdate(ctx, r.Client, ds, func() error {
+	op, err := controllerutil.CreateOrUpdate(ctx, r.Client, ds, func() error {
 		ds.Labels = desired.Labels
 
 		// spec.selector неизменяем — задаём только при создании
@@ -138,10 +171,15 @@ func (r *AccelDriverReconciler) applyDriverDaemonSet(
 		want := desired.Spec.Template.Spec.Containers[0]
 		c.Name = want.Name
 		c.Image = want.Image
+		c.Command = want.Command
+		c.Env = want.Env
+		c.ReadinessProbe = want.ReadinessProbe
 
 		// ownerReference: GC при удалении CR + события для Owns()
 		return controllerutil.SetControllerReference(driver, ds, r.Scheme)
 	})
+
+	return ds, op, err
 }
 
 // deleteStaleDaemonSets удаляет DaemonSet'ы этого CR, имён которых нет в keep.
@@ -192,6 +230,32 @@ func (r *AccelDriverReconciler) nodeToDrivers(ctx context.Context, _ client.Obje
 		reqs = append(reqs, reconcile.Request{NamespacedName: types.NamespacedName{Name: d.Name}})
 	}
 	return reqs
+}
+
+// updateStatus пишет status, только если он реально изменился.
+// Иначе каждая запись → событие For → Reconcile → запись → ... (та же ловушка цикла).
+func (r *AccelDriverReconciler) updateStatus(
+	ctx context.Context,
+	driver *accelv1alpha1.AccelDriver,
+	newStatus accelv1alpha1.AccelDriverStatus,
+	conds ...metav1.Condition,
+) error {
+	old := driver.Status.DeepCopy()
+
+	// условия берём старые: SetStatusCondition меняет lastTransitionTime,
+	// только когда Status действительно сменился
+	newStatus.Conditions = driver.Status.Conditions
+	for _, c := range conds {
+		c.ObservedGeneration = driver.Generation
+		meta.SetStatusCondition(&newStatus.Conditions, c)
+	}
+	newStatus.ObservedGeneration = driver.Generation
+
+	if equality.Semantic.DeepEqual(*old, newStatus) {
+		return nil
+	}
+	driver.Status = newStatus
+	return r.Status().Update(ctx, driver)
 }
 
 func (r *AccelDriverReconciler) SetupWithManager(mgr ctrl.Manager) error {

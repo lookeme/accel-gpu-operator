@@ -187,6 +187,7 @@ func main() {
 		Scheme:     mgr.GetScheme(),
 		Namespace:  "accel-gpu",
 		DriverRepo: "repo",
+		FakeDriver: true,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "acceldriver")
 		os.Exit(1)

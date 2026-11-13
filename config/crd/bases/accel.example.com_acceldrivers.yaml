@@ -14,7 +14,26 @@ spec:
     singular: acceldriver
   scope: Cluster
   versions:
-  - name: v1alpha1
+  - additionalPrinterColumns:
+    - jsonPath: .spec.version
+      name: Version
+      type: string
+    - jsonPath: .status.selectedNodes
+      name: Nodes
+      type: integer
+    - jsonPath: .status.desiredPods
+      name: Desired
+      type: integer
+    - jsonPath: .status.readyPods
+      name: Ready-Pods
+      type: integer
+    - jsonPath: .status.conditions[?(@.type=="Ready")].status
+      name: Ready
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
     schema:
       openAPIV3Schema:
         description: AccelDriver is the Schema for the acceldrivers API
@@ -102,16 +121,6 @@ spec:
             description: status defines the observed state of AccelDriver
             properties:
               conditions:
-                description: |-
-                  conditions represent the current state of the AccelDriver resource.
-                  Each condition has a unique type and reflects the status of a specific aspect of the resource.
-
-                  Standard condition types include:
-                  - "Available": the resource is fully functional
-                  - "Progressing": the resource is being created or updated
-                  - "Degraded": the resource failed to reach or maintain its desired state
-
-                  The status of each condition is one of True, False, or Unknown.
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.
@@ -170,6 +179,57 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              desiredPods:
+                format: int32
+                type: integer
+              groups:
+                items:
+                  description: |-
+                    AccelDriverStatus defines the observed state of AccelDriver.
+                    DriverGroupStatus — сводка по одной OS-группе (одному DaemonSet'у).
+                  properties:
+                    daemonSet:
+                      description: Managed DaemonSet name.
+                      type: string
+                    desiredPods:
+                      description: Pods the DaemonSet controller decided to run (excludes
+                        unschedulable nodes).
+                      format: int32
+                      type: integer
+                    name:
+                      description: Group key, e.g. "ubuntu-24.04".
+                      type: string
+                    readyPods:
+                      description: Pods passing their readiness probe.
+                      format: int32
+                      type: integer
+                    selectedNodes:
+                      description: Nodes we selected for this group.
+                      format: int32
+                      type: integer
+                    updatedPods:
+                      description: Pods running the current template.
+                      format: int32
+                      type: integer
+                  required:
+                  - daemonSet
+                  - desiredPods
+                  - name
+                  - readyPods
+                  - selectedNodes
+                  - updatedPods
+                  type: object
+                type: array
+              observedGeneration:
+                description: Generation of the spec this status was computed from.
+                format: int64
+                type: integer
+              readyPods:
+                format: int32
+                type: integer
+              selectedNodes:
+                format: int32
+                type: integer
             type: object
         required:
         - spec
